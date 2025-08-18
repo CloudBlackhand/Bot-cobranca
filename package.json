@@ -1,30 +1,40 @@
 {
   "name": "claudia-cobrancas",
   "version": "2.2.0",
-  "description": "Sistema oficial de cobrança da Desktop",
-  "main": "railway_start.py",
+  "description": "Sistema de Cobrança da Desktop com WhatsApp Web.js",
+  "main": "whatsapp-server.js",
   "scripts": {
-    "start": "python railway_start.py",
-    "dev": "python start.py",
-    "test": "python -m pytest",
-    "install-playwright": "python -m playwright install chromium --with-deps"
+    "start": "node railway-start.js",
+    "whatsapp": "node whatsapp-server.js",
+    "python": "python app.py",
+    "dev": "concurrently \"npm run whatsapp\" \"npm run python\"",
+    "postinstall": "npm install --save whatsapp-web.js puppeteer"
   },
   "engines": {
-    "node": "18.x",
-    "python": "3.11.7"
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0",
+    "python": "3.11.x"
   },
   "keywords": [
-    "cobrança",
+    "cobranca",
     "desktop",
     "whatsapp",
+    "whatsapp-web-js",
     "bot",
-    "ia",
     "railway"
   ],
   "author": "Desktop",
   "license": "MIT",
+  "dependencies": {
+    "whatsapp-web.js": "^1.23.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "qrcode": "^1.5.3",
+    "puppeteer": "^21.6.0",
+    "concurrently": "^8.2.2"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/CloudBlackhand/Bot-cobranca"
   }
-} 
+}
