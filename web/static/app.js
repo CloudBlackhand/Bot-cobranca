@@ -851,8 +851,24 @@ class BlacktemplarBot {
     }
     
     initWebSocket() {
+        // Detectar protocolo correto para WebSocket
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/status`;
+        
+        // Construir URL do WebSocket considerando possível path prefix
+        let wsPath = '/ws/status';
+        
+        // Se a aplicação está em um subpath (ex: /app), adicionar ao path do WebSocket
+        const pathname = window.location.pathname;
+        if (pathname && pathname !== '/' && !pathname.startsWith('/ws/')) {
+            // Extrair o base path se houver
+            const basePath = pathname.split('/').slice(0, -1).join('/');
+            if (basePath && basePath !== '') {
+                wsPath = basePath + wsPath;
+            }
+        }
+        
+        const wsUrl = `${protocol}//${window.location.host}${wsPath}`;
+        console.log('Conectando WebSocket em:', wsUrl);
         
         try {
             this.ws = new WebSocket(wsUrl);
@@ -869,10 +885,17 @@ class BlacktemplarBot {
                 this.handleWebSocketMessage(data);
             };
             
-            this.ws.onclose = () => {
+            this.ws.onclose = (event) => {
                 this.isConnected = false;
                 this.updateConnectionStatus(false);
-                this.scheduleReconnect();
+                
+                // Log detalhado do fechamento
+                console.log(`WebSocket fechado - Code: ${event.code}, Reason: ${event.reason}`);
+                
+                // Só reconectar se não foi fechamento intencional
+                if (event.code !== 1000 && event.code !== 1001) {
+                    this.scheduleReconnect();
+                }
             };
             
             this.ws.onerror = (error) => {

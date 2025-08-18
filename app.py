@@ -13,6 +13,7 @@ from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTa
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.requests import Request
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from typing import List, Optional
 import logging
 import uuid
@@ -55,23 +56,44 @@ from core.captcha_solver import CaptchaSolver, get_captcha_solver_info
 from core.storage_manager import storage_manager
 from config import Config, CLAUDIA_CONFIG
 
-# Inicializar FastAPI
+# Detectar se estamos atrás de um proxy
+BEHIND_PROXY = os.getenv("BEHIND_PROXY", "false").lower() == "true"
+ROOT_PATH = os.getenv("ROOT_PATH", "")
+
+# Inicializar FastAPI com configurações para proxy
 app = FastAPI(
     title="Claudia Cobranças",
     description="Sistema oficial de cobrança da Desktop",
-    version="2.2"
+    version="2.2",
+    root_path=ROOT_PATH if BEHIND_PROXY else "",
+    docs_url="/docs" if not BEHIND_PROXY else f"{ROOT_PATH}/docs",
+    redoc_url="/redoc" if not BEHIND_PROXY else f"{ROOT_PATH}/redoc"
 )
 
 # Adicionar CORS para WebSockets
 from fastapi.middleware.cors import CORSMiddleware
 
+# Configurar origens permitidas baseado no ambiente
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permitir todas as origens
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
+
+# Adicionar middleware para lidar com headers de proxy
+if BEHIND_PROXY:
+    # Adicionar hosts confiáveis
+    trusted_hosts = os.getenv("TRUSTED_HOSTS", "*").split(",")
+    if "*" not in trusted_hosts:
+        app.add_middleware(
+            TrustedHostMiddleware, 
+            allowed_hosts=trusted_hosts
+        )
 
 # Configurar arquivos estáticos com cabeçalhos anti-cache
 from fastapi.staticfiles import StaticFiles
@@ -562,11 +584,30 @@ def update_stats(stats):
 async def websocket_status(websocket):
     """WebSocket para atualizações em tempo real"""
     try:
+        # Configurar headers para proxy se necessário
+        if BEHIND_PROXY:
+            # Aceitar conexão com configurações específicas para proxy
+            headers = websocket.headers
+            
+            # Log dos headers recebidos para debug
+            logger.debug(f"WebSocket headers: {dict(headers)}")
+            
+            # Verificar se é uma conexão válida através do proxy
+            if "sec-websocket-key" not in headers:
+                logger.warning("WebSocket: Faltando header sec-websocket-key")
+                await websocket.close(code=1002, reason="Invalid WebSocket handshake")
+                return
+        
         # Accept deve ser a primeira operação, antes de qualquer processamento
         await websocket.accept()
         
         # Log de conexão bem-sucedida
-        logger.info("✅ WebSocket conectado")
+        client_info = ""
+        if BEHIND_PROXY and hasattr(websocket, 'headers'):
+            if "x-forwarded-for" in websocket.headers:
+                client_info = f" de {websocket.headers['x-forwarded-for'].split(',')[0].strip()}"
+        
+        logger.info(f"✅ WebSocket conectado{client_info}")
         
         # Loop de envio de atualizações
         while True:
@@ -1129,6 +1170,55 @@ async def auth_pending():
         "pending_requests": pending_list,
         "count": len(pending_list)
     }
+
+# ================================
+# 🔧 MIDDLEWARE PARA PROXY REVERSO
+# ================================
+
+@app.middleware("http")
+async def proxy_headers_middleware(request: Request, call_next):
+    """Middleware para processar headers de proxy reverso (Traefik, nginx, etc)"""
+    
+    if BEHIND_PROXY:
+        # Processar headers X-Forwarded-*
+        headers = request.headers
+        
+        # Obter IP real do cliente
+        if "x-forwarded-for" in headers:
+            # X-Forwarded-For pode conter múltiplos IPs separados por vírgula
+            # O primeiro é o IP original do cliente
+            client_ip = headers["x-forwarded-for"].split(",")[0].strip()
+            request.state.client_ip = client_ip
+        elif "x-real-ip" in headers:
+            request.state.client_ip = headers["x-real-ip"]
+        else:
+            request.state.client_ip = request.client.host
+        
+        # Processar protocolo (http/https)
+        if "x-forwarded-proto" in headers:
+            request.state.scheme = headers["x-forwarded-proto"]
+        
+        # Processar host original
+        if "x-forwarded-host" in headers:
+            request.state.forwarded_host = headers["x-forwarded-host"]
+        
+        # Processar porta original
+        if "x-forwarded-port" in headers:
+            request.state.forwarded_port = headers["x-forwarded-port"]
+            
+        # Log para debug
+        logger.debug(f"Proxy headers - IP: {request.state.client_ip}, "
+                    f"Proto: {request.state.scheme if hasattr(request.state, 'scheme') else 'N/A'}, "
+                    f"Host: {request.state.forwarded_host if hasattr(request.state, 'forwarded_host') else 'N/A'}")
+    
+    response = await call_next(request)
+    
+    # Adicionar headers de segurança
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    
+    return response
 
 # ================================
 # 🔒 MIDDLEWARE DE AUTENTICAÇÃO

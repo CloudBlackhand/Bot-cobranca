@@ -1,0 +1,92 @@
+# Configuração do Traefik v3.0
+api:
+  dashboard: true
+  debug: true
+
+# Pontos de entrada
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+    # Configurações para WebSocket
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 180s
+    forwardedHeaders:
+      trustedIPs:
+        - "127.0.0.1/32"
+        - "10.0.0.0/8"
+        - "172.16.0.0/12"
+        - "192.168.0.0/16"
+
+# Providers
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: claudia-network
+    watch: true
+  
+  file:
+    directory: /dynamic
+    watch: true
+
+# Certificados SSL (Let's Encrypt)
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@example.com  # Alterar para seu email
+      storage: /data/acme.json
+      httpChallenge:
+        entryPoint: web
+      # Para produção, remover o comentário abaixo
+      # caServer: https://acme-v02.api.letsencrypt.org/directory
+      # Para testes, usar staging
+      caServer: https://acme-staging-v02.api.letsencrypt.org/directory
+
+# Logs
+log:
+  level: INFO
+  format: common
+
+accessLog:
+  format: common
+  filters:
+    statusCodes:
+      - "200-299"
+      - "400-599"
+    retryAttempts: true
+    minDuration: "10ms"
+
+# Métricas (opcional)
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    buckets:
+      - 0.1
+      - 0.3
+      - 1.2
+      - 5.0
+
+# Ping (health check do Traefik)
+ping:
+  entryPoint: web
+
+# Configurações globais
+global:
+  checkNewVersion: true
+  sendAnonymousUsage: false
