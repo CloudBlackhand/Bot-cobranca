@@ -46,14 +46,20 @@ auth_settings = {
     "max_pending": 10
 }
 
-# Importar módulos core
+# Importar módulos core com lazy loading
 from core.excel_processor import ExcelProcessor
-from core.whatsapp_client import WhatsAppClient
 from core.conversation import SuperConversationEngine
-from core.fatura_downloader import FaturaDownloader
-from core.captcha_solver import CaptchaSolver, get_captcha_solver_info
 from core.storage_manager import storage_manager
 from config import Config, CLAUDIA_CONFIG
+
+# Importações lazy para módulos que dependem do Playwright
+from core.lazy_imports import (
+    LazyWhatsAppClient,
+    LazyFaturaDownloader,
+    LazyCaptchaSolver,
+    get_playwright_status,
+    get_system_capabilities
+)
 
 # Inicializar FastAPI
 app = FastAPI(
@@ -97,9 +103,19 @@ app.mount("/static", NoCacheStaticFiles(directory="web/static"), name="static")
 # Instâncias globais
 config = Config()
 excel_processor = ExcelProcessor()
-whatsapp_client = WhatsAppClient()
 conversation_engine = SuperConversationEngine()
+
+# Instâncias lazy (serão inicializadas sob demanda)
+whatsapp_client = LazyWhatsAppClient()
 fatura_downloader = None  # Será inicializado quando WhatsApp conectar
+captcha_solver = LazyCaptchaSolver()
+
+# Inicializar módulos lazy se possível
+try:
+    whatsapp_client.initialize()
+    captcha_solver.initialize()
+except Exception as e:
+    logger.warning(f"⚠️ Módulos opcionais não inicializados: {e}")
 
 # Estado do sistema
 system_state = {

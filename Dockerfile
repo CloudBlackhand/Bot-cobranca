@@ -1,37 +1,39 @@
-# Use Python 3.11 slim image
+# Railway Optimized Dockerfile - Claudia Cobranças
 FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for Playwright
+# Install minimal system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
-    wget \
-    gnupg \
-    ca-certificates \
-    procps \
-    libxss1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Copy requirements files
+COPY requirements_minimal.txt requirements.txt ./
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Playwright browsers
-RUN playwright install chromium
+# Install Python dependencies with fallback
+RUN pip install --no-cache-dir -r requirements_minimal.txt && \
+    pip install --no-cache-dir -r requirements.txt || echo "Some optional dependencies failed"
 
 # Copy application code
 COPY . .
 
+# Create necessary directories
+RUN mkdir -p uploads faturas web/static logs temp
+
+# Set environment variables
+ENV RAILWAY_DEPLOY=True \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8000
+
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=60s --timeout=60s --start-period=120s --retries=5 \
+# Health check with longer timeout for Railway
+HEALTHCHECK --interval=60s --timeout=90s --start-period=180s --retries=5 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Start the application
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"] 
+# Start using the optimized deploy script
+CMD ["python", "railway_deploy.py"]
