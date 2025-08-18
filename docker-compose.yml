@@ -1,0 +1,127 @@
+version: '3.8'
+
+services:
+  # Traefik - Proxy Reverso e Load Balancer
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Dashboard do Traefik (opcional, remover em produção)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/traefik.yml:ro
+      - ./traefik/dynamic:/dynamic:ro
+      - ./traefik/certs:/certs:ro
+      - traefik-data:/data
+    networks:
+      - claudia-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$2y$$10$$..."  # Gerar com htpasswd
+
+  # Aplicação Claudia Cobranças
+  claudia:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claudia-app
+    restart: unless-stopped
+    environment:
+      # Configurações do proxy
+      - BEHIND_PROXY=true
+      - ROOT_PATH=/
+      - ALLOWED_ORIGINS=http://localhost,https://localhost,http://claudia.localhost,https://claudia.localhost
+      - TRUSTED_HOSTS=localhost,claudia.localhost
+      
+      # Configurações da aplicação
+      - PORT=8000
+      - RAILWAY_DEPLOY=false
+      - LOG_LEVEL=INFO
+      - ENABLE_DETAILED_LOGS=true
+      
+      # Configurações do Playwright
+      - PLAYWRIGHT_HEADLESS=true
+      - PLAYWRIGHT_TIMEOUT=90000
+      - PLAYWRIGHT_MAX_RETRIES=2
+      
+      # Configurações do WhatsApp
+      - WHATSAPP_HEADLESS=true
+      - WHATSAPP_TIMEOUT=20000
+      
+      # URLs do sistema
+      - SAC_URL=https://sac.desktop.com.br/Cliente_Documento.jsp
+      - SUPPORT_EMAIL=cobranca@desktop.com.br
+    volumes:
+      - ./uploads:/app/uploads
+      - ./faturas:/app/faturas
+      - ./web:/app/web
+    networks:
+      - claudia-network
+    labels:
+      # Configuração do Traefik para HTTP
+      - "traefik.enable=true"
+      - "traefik.docker.network=claudia-network"
+      
+      # Roteador HTTP
+      - "traefik.http.routers.claudia.rule=Host(`claudia.localhost`) || Host(`localhost`)"
+      - "traefik.http.routers.claudia.entrypoints=web"
+      - "traefik.http.routers.claudia.middlewares=claudia-headers,claudia-compress"
+      
+      # Roteador HTTPS (se tiver certificados)
+      - "traefik.http.routers.claudia-secure.rule=Host(`claudia.localhost`) || Host(`localhost`)"
+      - "traefik.http.routers.claudia-secure.entrypoints=websecure"
+      - "traefik.http.routers.claudia-secure.tls=true"
+      - "traefik.http.routers.claudia-secure.middlewares=claudia-headers,claudia-compress"
+      
+      # Serviço
+      - "traefik.http.services.claudia.loadbalancer.server.port=8000"
+      - "traefik.http.services.claudia.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.claudia.loadbalancer.healthcheck.interval=30s"
+      - "traefik.http.services.claudia.loadbalancer.healthcheck.timeout=10s"
+      
+      # Middlewares
+      - "traefik.http.middlewares.claudia-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.claudia-headers.headers.customrequestheaders.X-Forwarded-Port=443"
+      - "traefik.http.middlewares.claudia-headers.headers.customresponseheaders.X-Content-Type-Options=nosniff"
+      - "traefik.http.middlewares.claudia-headers.headers.customresponseheaders.X-Frame-Options=SAMEORIGIN"
+      - "traefik.http.middlewares.claudia-headers.headers.customresponseheaders.X-XSS-Protection=1; mode=block"
+      
+      # Compressão
+      - "traefik.http.middlewares.claudia-compress.compress=true"
+      
+      # WebSocket - Roteador específico
+      - "traefik.http.routers.claudia-ws.rule=(Host(`claudia.localhost`) || Host(`localhost`)) && PathPrefix(`/ws`)"
+      - "traefik.http.routers.claudia-ws.entrypoints=web"
+      - "traefik.http.routers.claudia-ws.service=claudia"
+      - "traefik.http.routers.claudia-ws.middlewares=claudia-ws-headers"
+      
+      # WebSocket Headers
+      - "traefik.http.middlewares.claudia-ws-headers.headers.customrequestheaders.Connection=Upgrade"
+      - "traefik.http.middlewares.claudia-ws-headers.headers.customrequestheaders.Upgrade=websocket"
+
+  # Redis (opcional - para cache e sessões)
+  redis:
+    image: redis:7-alpine
+    container_name: claudia-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - claudia-network
+    command: redis-server --appendonly yes
+
+networks:
+  claudia-network:
+    driver: bridge
+
+volumes:
+  traefik-data:
+  redis-data:
