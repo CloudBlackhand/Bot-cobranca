@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # Serviço WAHA (WhatsApp HTTP API)
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha-claudia
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Configurações básicas do WAHA
+      - WAHA_BASE_URL=http://localhost:3000
+      - WAHA_DEFAULT_SESSION_NAME=claudia-cobrancas
+      - WAHA_SESSIONS_ENABLED=true
+      - WAHA_WEBHOOK_URL=http://claudia:8000/webhook
+      - WAHA_WEBHOOK_EVENTS=["message", "message.any", "state.change", "group.join", "group.leave"]
+      - WAHA_LOG_LEVEL=info
+      # Configurações de segurança (opcional)
+      # - WAHA_API_KEY=sua-chave-api-aqui
+    volumes:
+      - waha_sessions:/app/sessions
+    networks:
+      - claudia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Serviço Claudia Cobranças
+  claudia:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: claudia-cobrancas
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Configurações do sistema
+      - RAILWAY_DEPLOY=False
+      - PORT=8000
+      - LOG_LEVEL=INFO
+      
+      # Configurações do WAHA
+      - WAHA_URL=http://waha:3000
+      - WAHA_INSTANCE_NAME=claudia-cobrancas
+      - WEBHOOK_URL=http://claudia:8000/webhook
+      
+      # Configurações de desenvolvimento
+      - DEBUG_MODE=True
+      - ENABLE_DETAILED_LOGS=True
+      
+    volumes:
+      - ./uploads:/app/uploads
+      - ./faturas:/app/faturas
+      - ./logs:/app/logs
+    depends_on:
+      - waha
+    networks:
+      - claudia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  waha_sessions:
+    driver: local
+
+networks:
+  claudia-network:
+    driver: bridge
